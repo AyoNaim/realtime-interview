@@ -2,7 +2,7 @@ import type { ConnectionId, SessionId } from "@/types/realtime";
 import type { TranscriptSegment } from "@/types/transcript";
 import type { LLMStreamEvent } from "@/types/llm";
 
-export type clientMessage = 
+export type ClientMessage = 
     {
         type: "session:start";
         sessionId: SessionId
@@ -15,7 +15,7 @@ export type clientMessage =
         type: "session:stop"
     }
 
-export type serverMessage = 
+export type ServerMessage = 
     {
         type: "session:ready";
         sessionId: SessionId;

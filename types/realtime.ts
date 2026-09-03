@@ -9,7 +9,7 @@ export type RealtimeConnectionState =
   | "closed";
 
 export interface RealtimeSession {
-    sessonId: SessionId;
+    sessionId: SessionId;
     connectionId: ConnectionId;
     state: RealtimeConnectionState;
     createdAt: number;
