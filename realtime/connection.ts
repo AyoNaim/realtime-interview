@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { RawData, WebSocket } from "ws";
 
 import type { RealtimeSession } from "@/types/realtime";
@@ -6,9 +7,17 @@ import {
   DeepgramClient,
   type DeepgramEvent,
 } from "./deepgram/client";
+import { TranscriptAccumulator } from "./transcript/accumulator";
+import { TranscriptSegmenter } from "./transcript/segmenter";
 
 export class RealtimeConnection {
   private readonly deepgram: DeepgramClient;
+
+  private readonly transcriptAccumulator =
+    new TranscriptAccumulator();
+
+  private readonly transcriptSegmenter =
+    new TranscriptSegmenter();
 
   constructor(
     private readonly socket: WebSocket,
@@ -167,17 +176,7 @@ export class RealtimeConnection {
   ): void {
     switch (event.type) {
       case "transcript":
-        this.send({
-          type: "transcript",
-          segment: {
-            id: crypto.randomUUID(),
-            text: event.text,
-            isFinal: event.isFinal,
-            confidence: event.confidence,
-            startTime: event.startTime,
-            endTime: event.endTime,
-          },
-        });
+        this.handleTranscript(event);
         break;
 
       case "utterance_end":
@@ -195,6 +194,42 @@ export class RealtimeConnection {
       case "unknown":
         break;
     }
+  }
+
+  private handleTranscript(
+    event: Extract<DeepgramEvent, { type: "transcript" }>,
+  ): void {
+    if (!event.text.trim()) {
+      return;
+    }
+
+    const segment = {
+      id: randomUUID(),
+      text: event.text,
+      isFinal: event.isFinal,
+      confidence: event.confidence,
+      startTime: event.startTime,
+      endTime: event.endTime,
+    };
+
+    this.transcriptAccumulator.add(segment);
+
+    this.send({
+      type: "transcript",
+      segment,
+    });
+
+    const result = this.transcriptSegmenter.evaluate(
+      this.transcriptAccumulator.getState(),
+    );
+
+    if (!result.shouldTrigger) {
+      return;
+    }
+
+    console.log(
+      `[realtime:${this.session.sessionId}] LLM trigger: "${result.text}"`,
+    );
   }
 
   private handleDeepgramError(error: Error): void {
@@ -219,6 +254,9 @@ export class RealtimeConnection {
 
   private handleClose(): void {
     this.deepgram.close();
+
+    this.transcriptAccumulator.reset();
+    this.transcriptSegmenter.reset();
 
     console.log(
       `[realtime:${this.session.sessionId}] connection closed`,
