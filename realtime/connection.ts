@@ -1,5 +1,3 @@
-// realtime/connection.ts
-
 import type { RawData, WebSocket } from "ws";
 
 import type { RealtimeSession } from "@/types/realtime";
