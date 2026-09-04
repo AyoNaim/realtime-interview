@@ -2,15 +2,37 @@ import type { RawData, WebSocket } from "ws";
 
 import type { RealtimeSession } from "@/types/realtime";
 import type { ClientMessage, ServerMessage } from "./protocol";
+import {
+  DeepgramClient,
+  type DeepgramEvent,
+} from "./deepgram/client";
 
 export class RealtimeConnection {
+  private readonly deepgram: DeepgramClient;
+
   constructor(
     private readonly socket: WebSocket,
     private readonly session: RealtimeSession,
     private readonly onClose: () => void,
-  ) {}
+  ) {
+    this.deepgram = new DeepgramClient(
+      (event) => {
+        this.handleDeepgramEvent(event);
+      },
+      (error) => {
+        this.handleDeepgramError(error);
+      },
+      () => {
+        console.log(
+          `[realtime:${this.session.sessionId}] Deepgram connection closed`,
+        );
+      },
+    );
+  }
 
   start(): void {
+    this.deepgram.connect();
+
     this.socket.on("message", (data, isBinary) => {
       this.handleMessage(data, isBinary);
     });
@@ -54,9 +76,7 @@ export class RealtimeConnection {
   }
 
   private handleAudio(data: Buffer): void {
-    console.log(
-      `[realtime:${this.session.sessionId}] audio chunk: ${data.length} bytes`,
-    );
+    this.deepgram.sendAudio(data);
   }
 
   private handleControlMessage(data: Buffer): void {
@@ -138,7 +158,55 @@ export class RealtimeConnection {
       `[realtime:${this.session.sessionId}] session stopped`,
     );
 
+    this.deepgram.close();
     this.socket.close();
+  }
+
+  private handleDeepgramEvent(
+    event: DeepgramEvent,
+  ): void {
+    switch (event.type) {
+      case "transcript":
+        this.send({
+          type: "transcript",
+          segment: {
+            id: crypto.randomUUID(),
+            text: event.text,
+            isFinal: event.isFinal,
+            confidence: event.confidence,
+            startTime: event.startTime,
+            endTime: event.endTime,
+          },
+        });
+        break;
+
+      case "utterance_end":
+        console.log(
+          `[realtime:${this.session.sessionId}] utterance ended at ${event.lastWordEnd}s`,
+        );
+        break;
+
+      case "speech_started":
+        console.log(
+          `[realtime:${this.session.sessionId}] speech started at ${event.timestamp}s`,
+        );
+        break;
+
+      case "unknown":
+        break;
+    }
+  }
+
+  private handleDeepgramError(error: Error): void {
+    console.error(
+      `[realtime:${this.session.sessionId}] Deepgram error`,
+      error,
+    );
+
+    this.send({
+      type: "error",
+      message: "Speech transcription service error.",
+    });
   }
 
   private send(message: ServerMessage): void {
@@ -150,6 +218,8 @@ export class RealtimeConnection {
   }
 
   private handleClose(): void {
+    this.deepgram.close();
+
     console.log(
       `[realtime:${this.session.sessionId}] connection closed`,
     );
