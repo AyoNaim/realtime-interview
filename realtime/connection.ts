@@ -3,15 +3,21 @@ import type { RawData, WebSocket } from "ws";
 
 import type { RealtimeSession } from "@/types/realtime";
 import type { ClientMessage, ServerMessage } from "./protocol";
+
 import {
   DeepgramClient,
   type DeepgramEvent,
 } from "./deepgram/client";
+
 import { TranscriptAccumulator } from "./transcript/accumulator";
 import { TranscriptSegmenter } from "./transcript/segmenter";
 
+import { LLMClient } from "./llm/client";
+import { buildInterviewPrompt } from "./llm/prompt";
+
 export class RealtimeConnection {
   private readonly deepgram: DeepgramClient;
+  private readonly llm = new LLMClient();
 
   private readonly transcriptAccumulator =
     new TranscriptAccumulator();
@@ -197,7 +203,10 @@ export class RealtimeConnection {
   }
 
   private handleTranscript(
-    event: Extract<DeepgramEvent, { type: "transcript" }>,
+    event: Extract<
+      DeepgramEvent,
+      { type: "transcript" }
+    >,
   ): void {
     if (!event.text.trim()) {
       return;
@@ -214,21 +223,47 @@ export class RealtimeConnection {
 
     this.transcriptAccumulator.add(segment);
 
+    // Immediately send transcript updates to browser.
     this.send({
       type: "transcript",
       segment,
     });
 
-    const result = this.transcriptSegmenter.evaluate(
-      this.transcriptAccumulator.getState(),
-    );
+    const result =
+      this.transcriptSegmenter.evaluate(
+        this.transcriptAccumulator.getState(),
+      );
 
     if (!result.shouldTrigger) {
       return;
     }
 
+    this.handleLLMTrigger(result.text);
+  }
+
+  private handleLLMTrigger(
+    transcript: string,
+  ): void {
+    const requestId = randomUUID();
+
+    const prompt =
+      buildInterviewPrompt(transcript);
+
     console.log(
-      `[realtime:${this.session.sessionId}] LLM trigger: "${result.text}"`,
+      `[realtime:${this.session.sessionId}] LLM trigger: "${transcript}"`,
+    );
+
+    void this.llm.stream(
+      {
+        id: requestId,
+        prompt,
+      },
+      (event) => {
+        this.send({
+          type: "llm",
+          event,
+        });
+      },
     );
   }
 
