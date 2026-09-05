@@ -62,7 +62,14 @@ export class RealtimeConnection {
         error,
       );
     });
+
+    this.send({
+      type: "session:ready",
+      sessionId: this.session.sessionId,
+      connectionId: this.session.connectionId,
+    });
   }
+
 
   private handleMessage(
     data: RawData,

@@ -7,6 +7,7 @@ import { RealtimeConnection } from "./connection";
 const PORT = Number(process.env.REALTIME_PORT ?? 3001);
 
 const wss = new WebSocketServer({
+  HOST:"0.0.0.0",
   port: PORT,
 });
 
