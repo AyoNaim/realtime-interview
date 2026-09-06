@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { WebSocketServer } from "ws";
 import { randomUUID } from "node:crypto";
 

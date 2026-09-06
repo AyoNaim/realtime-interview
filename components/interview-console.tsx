@@ -40,14 +40,11 @@ export default function InterviewConsole() {
   const processorRef =
     useRef<ScriptProcessorNode | null>(null);
 
-  const sessionStartedRef =
+  const isCapturingRef =
     useRef(false);
 
   const [connectionState, setConnectionState] =
     useState<ConnectionState>("disconnected");
-
-  const [sessionId, setSessionId] =
-    useState<string | null>(null);
 
   const [isRecording, setIsRecording] =
     useState(false);
@@ -61,20 +58,20 @@ export default function InterviewConsole() {
   const [interimTranscript, setInterimTranscript] =
     useState<TranscriptSegment | null>(null);
 
-  const [response, setResponse] =
-    useState("");
-
-  const [isStreaming, setIsStreaming] =
-    useState(false);
-
-  const [latencyMs, setLatencyMs] =
-    useState<number | null>(null);
-
-  const [isMeasuringLatency, setIsMeasuringLatency] =
-    useState(false);
-
   const [microphoneError, setMicrophoneError] =
     useState<string | null>(null);
+
+  const [response] =
+    useState("");
+
+  const [isStreaming] =
+    useState(false);
+
+  const [latencyMs] =
+    useState<number | null>(null);
+
+  const [isMeasuringLatency] =
+    useState(false);
 
   const [pipeline, setPipeline] = useState({
     capture: "idle" as PipelineStage,
@@ -83,17 +80,27 @@ export default function InterviewConsole() {
     response: "idle" as PipelineStage,
   });
 
-  const llmStartTimeRef =
-    useRef<number | null>(null);
-
   useEffect(() => {
     const socket = new WebSocket(REALTIME_URL);
 
     socketRef.current = socket;
+
     setConnectionState("connecting");
 
     socket.addEventListener("open", () => {
+      console.log("[realtime] WebSocket connected");
+
       setConnectionState("connected");
+
+      /*
+       * The realtime server creates the Deepgram connection
+       * as soon as the WebSocket connection is established.
+       *
+       * Start microphone capture only after the WebSocket
+       * is ready so audio does not get discarded while the
+       * connection is still opening.
+       */
+      void startMicrophone();
     });
 
     socket.addEventListener("message", (event) => {
@@ -101,21 +108,29 @@ export default function InterviewConsole() {
     });
 
     socket.addEventListener("close", () => {
+      console.log("[realtime] WebSocket disconnected");
+
       setConnectionState("disconnected");
-      setSessionId(null);
-      sessionStartedRef.current = false;
 
       stopMicrophone();
     });
 
-    socket.addEventListener("error", () => {
+    socket.addEventListener("error", (error) => {
+      console.error(
+        "[realtime] WebSocket error",
+        error,
+      );
+
       setConnectionState("disconnected");
+
+      stopMicrophone();
     });
 
     return () => {
       stopMicrophone();
 
       socket.close();
+
       socketRef.current = null;
     };
   }, []);
@@ -134,170 +149,18 @@ export default function InterviewConsole() {
     };
   }, [isRecording]);
 
-  const handleServerMessage = (
-    data: unknown,
-  ): void => {
-    if (typeof data !== "string") {
-      return;
-    }
-
-    let message: unknown;
-
-    try {
-      message = JSON.parse(data);
-    } catch {
-      return;
-    }
-
-    if (!isServerMessage(message)) {
-      return;
-    }
-
-    switch (message.type) {
-      case "session:ready":
-        setSessionId(message.sessionId);
-
-        if (!sessionStartedRef.current) {
-          sessionStartedRef.current = true;
-
-          socketRef.current?.send(
-            JSON.stringify({
-              type: "session:start",
-              sessionId: message.sessionId,
-            }),
-          );
-        }
-
-        break;
-
-      case "transcript":
-        handleTranscript(message.segment);
-        break;
-
-      case "llm":
-        handleLLMEvent(message.event);
-        break;
-
-      case "error":
-        console.error(
-          `[realtime] ${message.message}`,
-        );
-        break;
-    }
-  };
-
-  const handleTranscript = (
-    segment: TranscriptSegment,
-  ): void => {
-    setPipeline((current) => ({
-      ...current,
-      stt: segment.isFinal
-        ? "complete"
-        : "active",
-    }));
-
-    if (segment.isFinal) {
-      setTranscriptSegments((current) => [
-        ...current,
-        segment,
-      ]);
-
-      setInterimTranscript(null);
-      return;
-    }
-
-    setInterimTranscript(segment);
-  };
-
-  const handleLLMEvent = (
-    event: Extract<
-      ServerMessage,
-      { type: "llm" }
-    >["event"],
-  ): void => {
-    switch (event.type) {
-      case "start":
-        setResponse("");
-        setIsStreaming(true);
-        setIsMeasuringLatency(true);
-
-        llmStartTimeRef.current =
-          performance.now();
-
-        setPipeline((current) => ({
-          ...current,
-          inference: "active",
-          response: "idle",
-        }));
-
-        break;
-
-      case "token":
-        if (llmStartTimeRef.current !== null) {
-          const elapsed =
-            performance.now() -
-            llmStartTimeRef.current;
-
-          setLatencyMs(elapsed);
-          setIsMeasuringLatency(false);
-        }
-
-        setResponse((current) =>
-          current + event.token,
-        );
-
-        setPipeline((current) => ({
-          ...current,
-          response: "active",
-        }));
-
-        break;
-
-      case "complete":
-        setIsStreaming(false);
-
-        setPipeline((current) => ({
-          ...current,
-          inference: "complete",
-          response: "complete",
-        }));
-
-        break;
-
-      case "error":
-        setIsStreaming(false);
-        setIsMeasuringLatency(false);
-
-        setPipeline((current) => ({
-          ...current,
-          inference: "idle",
-          response: "idle",
-        }));
-
-        break;
-    }
-  };
-
-  const toggleRecording = async (): Promise<void> => {
-    if (connectionState !== "connected") {
-      return;
-    }
-
-    if (isRecording) {
-      stopMicrophone();
-      return;
-    }
-
-    await startMicrophone();
-  };
-
   const startMicrophone = async (): Promise<void> => {
+    if (isCapturingRef.current) {
+      return;
+    }
+
     const socket = socketRef.current;
 
     if (!socket) {
       setMicrophoneError(
         "Realtime connection is unavailable.",
       );
+
       return;
     }
 
@@ -305,13 +168,7 @@ export default function InterviewConsole() {
       setMicrophoneError(
         "Realtime connection is not ready.",
       );
-      return;
-    }
 
-    if (!sessionId) {
-      setMicrophoneError(
-        "Realtime session is not ready yet.",
-      );
       return;
     }
 
@@ -319,16 +176,17 @@ export default function InterviewConsole() {
       setMicrophoneError(
         "Microphone access is not supported by this browser.",
       );
+
       return;
     }
 
     try {
       setMicrophoneError(null);
 
-      /*
-       * Permission is requested only after the user
-       * explicitly clicks "Start recording".
-       */
+      console.log(
+        "[microphone] requesting microphone access",
+      );
+
       const stream =
         await navigator.mediaDevices.getUserMedia({
           audio: {
@@ -339,6 +197,10 @@ export default function InterviewConsole() {
           },
           video: false,
         });
+
+      console.log(
+        "[microphone] microphone access granted",
+      );
 
       mediaStreamRef.current = stream;
 
@@ -351,6 +213,10 @@ export default function InterviewConsole() {
       if (audioContext.state === "suspended") {
         await audioContext.resume();
       }
+
+      console.log(
+        `[microphone] input sample rate: ${audioContext.sampleRate}Hz`,
+      );
 
       const source =
         audioContext.createMediaStreamSource(
@@ -382,10 +248,6 @@ export default function InterviewConsole() {
           return;
         }
 
-        if (!mediaStreamRef.current) {
-          return;
-        }
-
         const input =
           event.inputBuffer.getChannelData(0);
 
@@ -404,12 +266,11 @@ export default function InterviewConsole() {
       };
 
       /*
-       * Connect the microphone to the processor.
+       * ScriptProcessorNode needs to be connected to the
+       * audio graph to continue receiving audio events.
        *
-       * We connect the processor to the destination
-       * at a zero-gain level so the browser keeps the
-       * processing node active without playing the
-       * microphone back to the user.
+       * We send the output to a muted GainNode so the
+       * microphone is not played back through the speakers.
        */
       const silentGain =
         audioContext.createGain();
@@ -417,19 +278,28 @@ export default function InterviewConsole() {
       silentGain.gain.value = 0;
 
       source.connect(processor);
+
       processor.connect(silentGain);
+
       silentGain.connect(
         audioContext.destination,
       );
 
-      setElapsedTime(0);
+      isCapturingRef.current = true;
+
       setIsRecording(true);
+
+      setElapsedTime(0);
 
       setPipeline((current) => ({
         ...current,
         capture: "active",
-        stt: "idle",
+        stt: "active",
       }));
+
+      console.log(
+        "[microphone] PCM streaming started",
+      );
     } catch (error) {
       console.error(
         "[microphone] failed to start",
@@ -443,7 +313,7 @@ export default function InterviewConsole() {
         error.name === "NotAllowedError"
       ) {
         setMicrophoneError(
-          "Microphone access was denied. Allow microphone access in your browser to start recording.",
+          "Microphone access was denied. Allow microphone access in your browser.",
         );
       } else if (
         error instanceof DOMException &&
@@ -468,16 +338,20 @@ export default function InterviewConsole() {
   };
 
   const stopMicrophone = (): void => {
+    isCapturingRef.current = false;
+
     if (processorRef.current) {
       processorRef.current.onaudioprocess =
         null;
 
       processorRef.current.disconnect();
+
       processorRef.current = null;
     }
 
     if (mediaSourceRef.current) {
       mediaSourceRef.current.disconnect();
+
       mediaSourceRef.current = null;
     }
 
@@ -493,6 +367,7 @@ export default function InterviewConsole() {
 
     if (audioContextRef.current) {
       void audioContextRef.current.close();
+
       audioContextRef.current = null;
     }
 
@@ -502,6 +377,80 @@ export default function InterviewConsole() {
       ...current,
       capture: "idle",
     }));
+  };
+
+  const handleServerMessage = (
+    data: unknown,
+  ): void => {
+    if (typeof data !== "string") {
+      return;
+    }
+
+    let message: unknown;
+
+    try {
+      message = JSON.parse(data);
+    } catch {
+      return;
+    }
+
+    if (!isServerMessage(message)) {
+      return;
+    }
+
+    switch (message.type) {
+      case "session:ready":
+        console.log(
+          "[realtime] session ready",
+          message.sessionId,
+        );
+
+        break;
+
+      case "transcript":
+        handleTranscript(message.segment);
+
+        break;
+
+      case "llm":
+        /*
+         * LLM is intentionally not being used yet.
+         */
+        break;
+
+      case "error":
+        console.error(
+          `[realtime] ${message.message}`,
+        );
+
+        break;
+    }
+  };
+
+  const handleTranscript = (
+    segment: TranscriptSegment,
+  ): void => {
+    setPipeline((current) => ({
+      ...current,
+      stt: segment.isFinal
+        ? "complete"
+        : "active",
+    }));
+
+    if (segment.isFinal) {
+      setTranscriptSegments(
+        (current) => [
+          ...current,
+          segment,
+        ],
+      );
+
+      setInterimTranscript(null);
+
+      return;
+    }
+
+    setInterimTranscript(segment);
   };
 
   return (
@@ -515,14 +464,19 @@ export default function InterviewConsole() {
           <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.18em]">
             <span
               className={`h-1.5 w-1.5 rounded-full ${
-                connectionState === "connected"
+                isRecording
                   ? "bg-[#d66a3d]"
-                  : "bg-[#e9e7e1]/25"
+                  : connectionState ===
+                      "connected"
+                    ? "bg-[#e9e7e1]/50"
+                    : "bg-[#e9e7e1]/25"
               }`}
             />
 
             <span className="text-[#e9e7e1]/55">
-              {connectionState}
+              {isRecording
+                ? "listening"
+                : connectionState}
             </span>
           </div>
         </header>
@@ -546,8 +500,8 @@ export default function InterviewConsole() {
             <PipelineVisualizer
               capture={pipeline.capture}
               stt={pipeline.stt}
-              inference={pipeline.inference}
-              response={pipeline.response}
+              inference="idle"
+              response="idle"
             />
           </div>
 
@@ -581,9 +535,7 @@ export default function InterviewConsole() {
                 </div>
 
                 <div className="text-[#e9e7e1]/70">
-                  {isStreaming
-                    ? "Streaming"
-                    : pipeline.inference}
+                  Offline
                 </div>
               </div>
 
@@ -593,31 +545,8 @@ export default function InterviewConsole() {
               />
             </div>
 
-            <div className="flex items-center gap-8">
-              <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-[#e9e7e1]/40">
-                {formatElapsedTime(elapsedTime)}
-              </div>
-
-              <button
-                type="button"
-                onClick={toggleRecording}
-                disabled={
-                  connectionState !== "connected"
-                }
-                className="font-mono text-[10px] uppercase tracking-[0.2em] text-[#e9e7e1]/75 transition-opacity hover:text-[#e9e7e1] disabled:cursor-not-allowed disabled:opacity-25"
-              >
-                <span
-                  className={`mr-2 inline-block h-1.5 w-1.5 rounded-full ${
-                    isRecording
-                      ? "bg-[#d66a3d]"
-                      : "bg-[#e9e7e1]/30"
-                  }`}
-                />
-
-                {isRecording
-                  ? "Stop recording"
-                  : "Start recording"}
-              </button>
+            <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-[#e9e7e1]/40">
+              {formatElapsedTime(elapsedTime)}
             </div>
           </div>
 
@@ -633,45 +562,6 @@ export default function InterviewConsole() {
       </div>
     </main>
   );
-}
-
-function isServerMessage(
-  value: unknown,
-): value is ServerMessage {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-
-  const message = value as Record<
-    string,
-    unknown
-  >;
-
-  switch (message.type) {
-    case "session:ready":
-      return (
-        typeof message.sessionId === "string" &&
-        typeof message.connectionId === "string"
-      );
-
-    case "transcript":
-      return (
-        typeof message.segment === "object" &&
-        message.segment !== null
-      );
-
-    case "llm":
-      return (
-        typeof message.event === "object" &&
-        message.event !== null
-      );
-
-    case "error":
-      return typeof message.message === "string";
-
-    default:
-      return false;
-  }
 }
 
 function downsampleTo16BitPCM(
@@ -724,6 +614,7 @@ function downsampleTo16BitPCM(
       inputIndex < input.length
     ) {
       sum += input[inputIndex];
+
       count++;
       inputIndex++;
     }
@@ -771,11 +662,60 @@ function float32To16BitPCM(
   return output.buffer;
 }
 
+function isServerMessage(
+  value: unknown,
+): value is ServerMessage {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const message = value as Record<
+    string,
+    unknown
+  >;
+
+  switch (message.type) {
+    case "session:ready":
+      return (
+        typeof message.sessionId ===
+          "string" &&
+        typeof message.connectionId ===
+          "string"
+      );
+
+    case "transcript":
+      return (
+        typeof message.segment ===
+          "object" &&
+        message.segment !== null
+      );
+
+    case "llm":
+      return (
+        typeof message.event ===
+          "object" &&
+        message.event !== null
+      );
+
+    case "error":
+      return (
+        typeof message.message === "string"
+      );
+
+    default:
+      return false;
+  }
+}
+
 function formatElapsedTime(
   seconds: number,
 ): string {
-  const minutes = Math.floor(seconds / 60);
-  const remainingSeconds = seconds % 60;
+  const minutes = Math.floor(
+    seconds / 60,
+  );
+
+  const remainingSeconds =
+    seconds % 60;
 
   return `${String(minutes).padStart(
     2,
