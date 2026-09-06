@@ -15,7 +15,7 @@ import type { ServerMessage } from "@/realtime/protocol";
 
 const REALTIME_URL =
   process.env.NEXT_PUBLIC_REALTIME_URL ??
-  "wss://redesigned-carnival-7q5gv64x6vxhr769-3001.app.github.dev";
+  "ws://localhost:3001";
 
 const TARGET_SAMPLE_RATE = 16_000;
 const SCRIPT_PROCESSOR_BUFFER_SIZE = 4096;
@@ -81,7 +81,7 @@ export default function InterviewConsole() {
   });
 
   useEffect(() => {
-    const socket = new WebSocket(REALTIME_URL);
+    const socket = new WebSocket("wss://redesigned-carnival-7q5gv64x6vxhr769-3001.app.github.dev");
 
     socketRef.current = socket;
 

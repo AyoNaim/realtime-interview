@@ -70,7 +70,6 @@ export class RealtimeConnection {
     });
   }
 
-
   private handleMessage(
     data: RawData,
     isBinary: boolean,
@@ -148,7 +147,9 @@ export class RealtimeConnection {
     }
   }
 
-  private handleClientMessage(message: ClientMessage): void {
+  private handleClientMessage(
+    message: ClientMessage,
+  ): void {
     switch (message.type) {
       case "session:start":
         this.handleSessionStart(message.sessionId);
@@ -160,7 +161,9 @@ export class RealtimeConnection {
     }
   }
 
-  private handleSessionStart(sessionId: string): void {
+  private handleSessionStart(
+    sessionId: string,
+  ): void {
     if (sessionId !== this.session.sessionId) {
       this.send({
         type: "error",
@@ -230,7 +233,8 @@ export class RealtimeConnection {
 
     this.transcriptAccumulator.add(segment);
 
-    // Immediately send transcript updates to browser.
+    // Send interim and finalized transcript updates
+    // to the browser immediately.
     this.send({
       type: "transcript",
       segment,
@@ -257,7 +261,11 @@ export class RealtimeConnection {
       buildInterviewPrompt(transcript);
 
     console.log(
-      `[realtime:${this.session.sessionId}] LLM trigger: "${transcript}"`,
+      `[realtime:${this.session.sessionId}] LLM trigger`,
+      {
+        requestId,
+        transcript,
+      },
     );
 
     void this.llm.stream(
@@ -274,7 +282,9 @@ export class RealtimeConnection {
     );
   }
 
-  private handleDeepgramError(error: Error): void {
+  private handleDeepgramError(
+    error: Error,
+  ): void {
     console.error(
       `[realtime:${this.session.sessionId}] Deepgram error`,
       error,
@@ -286,12 +296,19 @@ export class RealtimeConnection {
     });
   }
 
-  private send(message: ServerMessage): void {
-    if (this.socket.readyState !== this.socket.OPEN) {
+  private send(
+    message: ServerMessage,
+  ): void {
+    if (
+      this.socket.readyState !==
+      this.socket.OPEN
+    ) {
       return;
     }
 
-    this.socket.send(JSON.stringify(message));
+    this.socket.send(
+      JSON.stringify(message),
+    );
   }
 
   private handleClose(): void {

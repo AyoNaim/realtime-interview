@@ -20,11 +20,13 @@ export class TranscriptSegmenter {
       };
     }
 
-    const meaningfulSegment = newSegments.find((segment) =>
-      this.isMeaningful(segment.text),
-    );
+    this.processedFinalizedCount =
+      state.finalized.length;
 
-    this.processedFinalizedCount = state.finalized.length;
+    const meaningfulSegment = newSegments.find(
+      (segment) =>
+        this.isMeaningful(segment.text),
+    );
 
     if (!meaningfulSegment) {
       return {
@@ -33,9 +35,15 @@ export class TranscriptSegmenter {
       };
     }
 
+    const text = state.finalized
+      .map((segment) => segment.text.trim())
+      .filter(Boolean)
+      .join(" ")
+      .trim();
+
     return {
       shouldTrigger: true,
-      text: meaningfulSegment.text.trim(),
+      text,
     };
   }
 
@@ -50,7 +58,8 @@ export class TranscriptSegmenter {
       return false;
     }
 
-    const wordCount = normalized.split(/\s+/).length;
+    const wordCount =
+      normalized.split(/\s+/).length;
 
     return wordCount >= 3;
   }
