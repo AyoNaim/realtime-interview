@@ -86,7 +86,11 @@ export class DeepgramClient {
   }
 
   private handleMessage(data: string): void {
+    console.log("[deepgram] RAW:", data);
+
     const event = parseDeepgramEvent(data);
+
+    console.log("[deepgram] PARSED:", event);
 
     if (event.type === "unknown") {
       return;

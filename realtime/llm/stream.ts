@@ -9,18 +9,36 @@ export async function streamLLMResponse(
   const decoder = new TextDecoder();
 
   let buffer = "";
+  let tokenCount = 0;
+
+  console.log("[llm-stream] reader started", {
+    requestId,
+  });
 
   try {
     while (true) {
       const { value, done } = await reader.read();
 
       if (done) {
+        console.log("[llm-stream] reader done", {
+          requestId,
+          tokenCount,
+        });
+
         break;
       }
 
-      buffer += decoder.decode(value, {
+      const chunk = decoder.decode(value, {
         stream: true,
       });
+
+      console.log("[llm-stream] chunk received", {
+        requestId,
+        bytes: value.byteLength,
+        preview: chunk.slice(0, 300),
+      });
+
+      buffer += chunk;
 
       const lines = buffer.split("\n");
 
@@ -35,14 +53,37 @@ export async function streamLLMResponse(
 
         const payload = data.slice(5).trim();
 
+        console.log("[llm-stream] SSE payload", {
+          requestId,
+          payload: payload.slice(0, 500),
+        });
+
         if (payload === "[DONE]") {
+          console.log("[llm-stream] DONE", {
+            requestId,
+            tokenCount,
+          });
+
           return;
         }
 
         const token = extractToken(payload);
 
         if (!token) {
+          console.log("[llm-stream] no token in payload", {
+            requestId,
+          });
+
           continue;
+        }
+
+        tokenCount++;
+
+        if (tokenCount === 1) {
+          console.log("[llm-stream] FIRST TOKEN", {
+            requestId,
+            token,
+          });
         }
 
         onEvent({
@@ -81,7 +122,15 @@ function extractToken(
     return typeof content === "string"
       ? content
       : null;
-  } catch {
+  } catch (error) {
+    console.error(
+      "[llm-stream] failed to parse SSE payload",
+      {
+        payload,
+        error,
+      },
+    );
+
     return null;
   }
 }

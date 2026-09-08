@@ -265,6 +265,7 @@ export class RealtimeConnection {
       {
         requestId,
         transcript,
+        prompt
       },
     );
 
@@ -278,6 +279,14 @@ export class RealtimeConnection {
           type: "llm",
           event,
         });
+      },
+    );
+    console.log(
+      `[realtime:${this.session.sessionId}] LLM request sent!`,
+      {
+        requestId,
+        transcript,
+        prompt,
       },
     );
   }
